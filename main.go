@@ -213,6 +213,7 @@ func main() {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /event/{eventID}", EventShowHandler())
+	mux.HandleFunc("GET /user/{userID}/basket", BasketShowHandler())
 	mux.HandleFunc("POST /reserve", ReserveHandler())
 
 	http.ListenAndServe("localhost:3000", mux)
@@ -247,6 +248,29 @@ func EventShowHandler() http.HandlerFunc {
 	}
 }
 
+func BasketShowHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID := r.PathValue("userID")
+		basket := inventory.GetBasket(userID)
+
+		tmpl := template.Must(template.ParseFiles("templates/basket.html"))
+		err := tmpl.Execute(w, basket)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
+}
+
 func (a *InventoryActor) GetEvent(eventID string) Event {
 	return a.events[eventID]
+}
+
+func (a *InventoryActor) GetBasket(userID string) []Ticket {
+	return a.baskets[userID]
+}
+
+func (t Ticket) Seat() string {
+	event := inventory.GetEvent(t.EventID)
+	seat := event.Seats[t.SeatID]
+	return fmt.Sprintf("%s-%d", seat.Row, seat.Seat)
 }

@@ -1,4 +1,4 @@
-{{ define "content" }}
+{{ define "content" }} {{ $userID := "01958247-10d3-7348-8006-c0d6db836a01" }}
 <style>
     #seat-map {
         display: grid;
@@ -42,6 +42,8 @@
     {{ end }}
 </div>
 
+<div id="basket" hx-get="/user/{{$userID}}/basket" hx-trigger="load"></div>
+
 <script>
     const seats = document.querySelectorAll("#seat-map button");
     seats.forEach((seat) => {
@@ -54,7 +56,7 @@
                 body: JSON.stringify({
                     seat_ids: [seat.dataset.seatId],
                     event_id: {{ .ID }},
-                    user_id: "01958247-10d3-7348-8006-c0d6db836a01"
+                    user_id: {{ $userID}}
                 }),
             })
             .then((response) => response.json())
