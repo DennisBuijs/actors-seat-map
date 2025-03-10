@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"net/http"
 	"strconv"
 	"sync"
@@ -134,10 +135,10 @@ func NewInventoryActor() *InventoryActor {
 		Seats: make(map[string]Seat),
 	}
 
-	event.Seats = make(map[string]Seat, 200)
-	rows := []string{"A", "B", "C", "D", "E", "F", "G", "H", "I", "J"}
+	event.Seats = make(map[string]Seat, 50)
+	rows := []string{"A", "B", "C", "D", "E"}
 	for _, row := range rows {
-		for i := range 20 {
+		for i := range 10 {
 			seat := Seat{
 				ID:     "seat-" + row + "-" + strconv.Itoa(i+1),
 				Row:    row,
@@ -211,6 +212,7 @@ func NewNotificationActor() *NotificationActor {
 func main() {
 	mux := http.NewServeMux()
 
+	mux.HandleFunc("GET /event/{eventID}", EventShowHandler())
 	mux.HandleFunc("POST /reserve", ReserveHandler())
 
 	http.ListenAndServe("localhost:3000", mux)
@@ -230,4 +232,21 @@ func ReserveHandler() http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte("{\"message\": \"Ticket request received\"}"))
 	}
+}
+
+func EventShowHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		eventID := r.PathValue("eventID")
+		event := inventory.GetEvent(eventID)
+
+		tmpl := template.Must(template.ParseFiles("templates/base.html", "templates/event.html"))
+		err := tmpl.Execute(w, event)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
+}
+
+func (a *InventoryActor) GetEvent(eventID string) Event {
+	return a.events[eventID]
 }
