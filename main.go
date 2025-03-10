@@ -1,40 +1,66 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 )
 
 type Ticket struct {
-	ID     int
-	Holder string
-	Status string
+	ID         string    `json:"id"`
+	UserID     string    `json:"user_id"`
+	Status     string    `json:"status"`
+	SeatID     string    `json:"seat_id"`
+	EventID    string    `json:"event_id"`
+	ReservedAt time.Time `json:"reserved_at"`
+}
+
+type Seat struct {
+	ID     string `json:"id"`
+	Row    string `json:"row"`
+	Seat   int    `json:"seat"`
+	Status string `json:"status"`
+}
+
+type Event struct {
+	ID    string          `json:"id"`
+	Name  string          `json:"name"`
+	Seats map[string]Seat `json:"seats"`
+}
+
+type ReservationRequest struct {
+	UserID  string   `json:"user_id"`
+	EventID string   `json:"event_id"`
+	SeatIDs []string `json:"seat_ids"`
 }
 
 type UserActor struct {
-	mailbox chan string
+	mailbox chan ReservationRequest
 }
 
 type ReservationActor struct {
-	mailbox   chan string
+	mailbox   chan ReservationRequest
 	inventory *InventoryActor
 	payment   *PaymentActor
 }
 
 type InventoryActor struct {
 	mu      sync.Mutex
-	tickets map[int]Ticket
+	tickets map[string]Ticket
+	events  map[string]Event
+	baskets map[string][]Ticket
 }
 
 type PaymentActor struct {
-	mailbox  chan Ticket
+	mailbox  chan []Ticket
 	notifier *NotificationActor
 }
 
 type NotificationActor struct {
-	mailbox chan Ticket
+	mailbox chan []Ticket
 }
 
 var inventory = NewInventoryActor()
@@ -43,13 +69,13 @@ var user = NewUserActor()
 
 func NewUserActor() *UserActor {
 	actor := &UserActor{
-		mailbox: make(chan string),
+		mailbox: make(chan ReservationRequest),
 	}
 
 	go func() {
-		for UserID := range actor.mailbox {
-			fmt.Printf("[UserActor] User %s requesting a ticket\n", UserID)
-			reservation.mailbox <- UserID
+		for req := range actor.mailbox {
+			fmt.Printf("[UserActor] User %s requesting %d tickets\n", req.UserID, len(req.SeatIDs))
+			reservation.mailbox <- req
 		}
 	}()
 
@@ -58,19 +84,19 @@ func NewUserActor() *UserActor {
 
 func NewReservationActor(inventory *InventoryActor, payment *PaymentActor) *ReservationActor {
 	actor := &ReservationActor{
-		mailbox:   make(chan string),
+		mailbox:   make(chan ReservationRequest),
 		inventory: inventory,
 		payment:   payment,
 	}
 
 	go func() {
-		for userID := range actor.mailbox {
-			ticket, success := inventory.ReserveTicket(userID)
+		for req := range actor.mailbox {
+			tickets, success := inventory.ReserveTicket(req.UserID, req.EventID, req.SeatIDs)
 			if success {
-				fmt.Printf("[ReservationActor] User %s reserved ticket %d\n", userID, ticket.ID)
-				payment.mailbox <- ticket
+				fmt.Printf("[ReservationActor] User %s reserved %d tickets for event %s\n", req.UserID, len(req.SeatIDs), req.EventID)
+				payment.mailbox <- tickets
 			} else {
-				fmt.Printf("[ReservationActor] User %s failed to reserve a ticket\n", userID)
+				fmt.Printf("[ReservationActor] User %s failed to reserve a ticket\n", req.UserID)
 			}
 		}
 	}()
@@ -80,15 +106,15 @@ func NewReservationActor(inventory *InventoryActor, payment *PaymentActor) *Rese
 
 func NewPaymentActor(notifier *NotificationActor) *PaymentActor {
 	actor := &PaymentActor{
-		mailbox:  make(chan Ticket),
+		mailbox:  make(chan []Ticket),
 		notifier: notifier,
 	}
 
 	go func() {
-		for ticket := range actor.mailbox {
+		for tickets := range actor.mailbox {
 			time.Sleep(3 * time.Second)
-			fmt.Printf("[PaymentActor] Payment received for ticket %d\n", ticket.ID)
-			notifier.mailbox <- ticket
+			fmt.Printf("[PaymentActor] Payment received for %d tickets\n", len(tickets))
+			notifier.mailbox <- tickets
 		}
 	}()
 
@@ -97,40 +123,85 @@ func NewPaymentActor(notifier *NotificationActor) *PaymentActor {
 
 func NewInventoryActor() *InventoryActor {
 	actor := &InventoryActor{
-		tickets: make(map[int]Ticket),
+		tickets: make(map[string]Ticket),
+		events:  make(map[string]Event),
+		baskets: make(map[string][]Ticket),
 	}
 
-	for i := 1; i <= 100; i++ {
-		actor.tickets[i] = Ticket{ID: i, Status: "Available"}
+	event := Event{
+		ID:    "Event_1",
+		Name:  "Event 1",
+		Seats: make(map[string]Seat),
 	}
+
+	event.Seats = make(map[string]Seat, 200)
+	rows := []string{"A", "B", "C", "D", "E", "F", "G", "H", "I", "J"}
+	for _, row := range rows {
+		for i := range 20 {
+			seat := Seat{
+				ID:     "seat-" + row + "-" + strconv.Itoa(i+1),
+				Row:    row,
+				Seat:   i + 1,
+				Status: "Available",
+			}
+			event.Seats[seat.ID] = seat
+		}
+	}
+
+	actor.events[event.ID] = event
 
 	return actor
 }
 
-func (a *InventoryActor) ReserveTicket(userID string) (Ticket, bool) {
+func (a *InventoryActor) ReserveTicket(userID string, eventID string, seatIDs []string) ([]Ticket, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	for id, ticket := range a.tickets {
-		if ticket.Status == "Available" {
-			ticket.Status = "Reserved"
-			ticket.Holder = userID
-			a.tickets[id] = ticket
-			return ticket, true
+	event, exists := a.events[eventID]
+	if !exists {
+		return nil, false
+	}
+
+	for _, seatID := range seatIDs {
+		if seat, ok := event.Seats[seatID]; !ok || seat.Status != "Available" {
+			return nil, false
 		}
 	}
 
-	return Ticket{}, false
+	reservedTickets := make([]Ticket, 0, len(seatIDs))
+	reservationTime := time.Now()
+
+	for _, seatID := range seatIDs {
+		seat := event.Seats[seatID]
+		seat.Status = "Reserved"
+		event.Seats[seatID] = seat
+
+		ticket := Ticket{
+			ID:         seat.ID,
+			UserID:     userID,
+			EventID:    eventID,
+			SeatID:     seatID,
+			ReservedAt: reservationTime,
+		}
+
+		a.tickets[ticket.ID] = ticket
+		reservedTickets = append(reservedTickets, ticket)
+	}
+
+	a.events[eventID] = event
+	a.baskets[userID] = append(a.baskets[userID], reservedTickets...)
+
+	return reservedTickets, true
 }
 
 func NewNotificationActor() *NotificationActor {
 	actor := &NotificationActor{
-		mailbox: make(chan Ticket),
+		mailbox: make(chan []Ticket),
 	}
 
 	go func() {
-		for ticket := range actor.mailbox {
-			fmt.Printf("[NotificationActor] Ticket %d reserved by %s\n", ticket.ID, ticket.Holder)
+		for tickets := range actor.mailbox {
+			fmt.Printf("[NotificationActor] %d tickets reserved by %s\n", len(tickets), tickets[0].UserID)
 		}
 	}()
 
@@ -147,13 +218,16 @@ func main() {
 
 func ReserveHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID := r.URL.Query().Get("user_id")
-		if userID == "" {
-			http.Error(w, "User ID is required", http.StatusBadRequest)
+		var req ReservationRequest
+		err := json.NewDecoder(r.Body).Decode(&req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 
-		user.mailbox <- userID
-		w.Write([]byte("{\"message\": \"Ticket request received\""))
+		user.mailbox <- req
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("{\"message\": \"Ticket request received\"}"))
 	}
 }
