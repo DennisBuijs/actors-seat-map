@@ -36,13 +36,14 @@
 </style>
 <h1>{{ .Name }}</h1>
 
-<div id="seat-map">
-    {{ range .Seats}} <button class="{{.Status}}" data-seat-id="{{ .ID }}">{{ .Seat }}</button>
+<div id="seat-map" hx-ext="sse" sse-connect="/sse?stream={{.ID}}">
+    {{ range .Seats}}
+    <button class="{{.Status}}" data-seat-id="{{ .ID }}" sse-swap="{{.ID}}" hx-swap="outerHTML">{{ .Seat }}</button>
 
     {{ end }}
 </div>
 
-<div id="basket" hx-get="/user/{{$userID}}/basket" hx-trigger="load"></div>
+<div id="basket" hx-ext="sse" sse-connect="/sse?stream={{$userID}}" sse-swap="reservation"></div>
 
 <script>
     const seats = document.querySelectorAll("#seat-map button");

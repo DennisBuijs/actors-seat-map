@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/r3labs/sse/v2"
 )
 
 type Ticket struct {
@@ -68,6 +70,10 @@ var inventory = NewInventoryActor()
 var reservation = NewReservationActor(inventory, NewPaymentActor(NewNotificationActor()))
 var user = NewUserActor()
 
+var sseServer = sse.New()
+
+var globalUserID = "01958247-10d3-7348-8006-c0d6db836a01" // until we have a real user implementation
+
 func NewUserActor() *UserActor {
 	actor := &UserActor{
 		mailbox: make(chan ReservationRequest),
@@ -95,6 +101,17 @@ func NewReservationActor(inventory *InventoryActor, payment *PaymentActor) *Rese
 			tickets, success := inventory.ReserveTicket(req.UserID, req.EventID, req.SeatIDs)
 			if success {
 				fmt.Printf("[ReservationActor] User %s reserved %d tickets for event %s\n", req.UserID, len(req.SeatIDs), req.EventID)
+				sseServer.Publish(req.UserID, &sse.Event{
+					Event: []byte("reservation"),
+					Data:  []byte(inventory.GetBasketAsHTML(req.UserID)),
+				})
+
+				for _, seatID := range req.SeatIDs {
+					sseServer.Publish(req.EventID, &sse.Event{
+						Event: []byte(seatID),
+						Data:  []byte(inventory.GetSeatAsHTML(req.EventID, seatID)),
+					})
+				}
 				payment.mailbox <- tickets
 			} else {
 				fmt.Printf("[ReservationActor] User %s failed to reserve a ticket\n", req.UserID)
@@ -113,7 +130,6 @@ func NewPaymentActor(notifier *NotificationActor) *PaymentActor {
 
 	go func() {
 		for tickets := range actor.mailbox {
-			time.Sleep(3 * time.Second)
 			fmt.Printf("[PaymentActor] Payment received for %d tickets\n", len(tickets))
 			notifier.mailbox <- tickets
 		}
@@ -150,6 +166,7 @@ func NewInventoryActor() *InventoryActor {
 	}
 
 	actor.events[event.ID] = event
+	sseServer.CreateStream(event.ID)
 
 	return actor
 }
@@ -210,11 +227,15 @@ func NewNotificationActor() *NotificationActor {
 }
 
 func main() {
+	sseServer.CreateStream(globalUserID)
+
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /event/{eventID}", EventShowHandler())
 	mux.HandleFunc("GET /user/{userID}/basket", BasketShowHandler())
 	mux.HandleFunc("POST /reserve", ReserveHandler())
+
+	mux.HandleFunc("GET /sse", sseServer.ServeHTTP)
 
 	http.ListenAndServe("localhost:3000", mux)
 }
@@ -273,4 +294,18 @@ func (t Ticket) Seat() string {
 	event := inventory.GetEvent(t.EventID)
 	seat := event.Seats[t.SeatID]
 	return fmt.Sprintf("%s-%d", seat.Row, seat.Seat)
+}
+
+func (a *InventoryActor) GetBasketAsHTML(userID string) string {
+	basket := a.baskets[userID]
+	var html string
+	for _, ticket := range basket {
+		html += fmt.Sprintf("<li>%s</li>", ticket.Seat())
+	}
+	return html
+}
+
+func (a *InventoryActor) GetSeatAsHTML(eventID string, seatID string) string {
+	seat := a.events[eventID].Seats[seatID]
+	return fmt.Sprintf("<button class=\"%s\" data-seat-id=\"%s\" sse-swap=\"%s\">%d</button>", seat.Status, seat.ID, seat.ID, seat.Seat)
 }
