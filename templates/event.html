@@ -10,26 +10,24 @@
             width: 40px;
             height: 40px;
             border-radius: 50%;
-
-            &:hover {
-                background: darkcyan;
-                color: white;
-                cursor: pointer;
-            }
-
-            &.selected {
-                background: darkcyan;
-                color: white;
-            }
+            cursor: pointer;
 
             &.Available {
                 border: 2px solid darkgreen;
                 background: lightgreen;
+                &:hover {
+                    background: darkgreen;
+                    color: white;
+                }
             }
 
             &.Reserved {
                 border: 2px solid darkred;
                 background: red;
+                &:hover {
+                    background: darkred;
+                    color: white;
+                }
             }
         }
     }
@@ -39,7 +37,6 @@
 <div id="seat-map" hx-ext="sse" sse-connect="/sse?stream={{.ID}}">
     {{ range .Seats}}
     <button class="{{.Status}}" data-seat-id="{{ .ID }}" sse-swap="{{.ID}}" hx-swap="outerHTML">{{ .Seat }}</button>
-
     {{ end }}
 </div>
 

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
-	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -146,7 +146,7 @@ func NewInventoryActor() *InventoryActor {
 	}
 
 	event := Event{
-		ID:    "Event_1",
+		ID:    "event_1",
 		Name:  "Event 1",
 		Seats: make(map[string]Seat),
 	}
@@ -155,8 +155,10 @@ func NewInventoryActor() *InventoryActor {
 	rows := []string{"A", "B", "C", "D", "E"}
 	for _, row := range rows {
 		for i := range 10 {
+			seatNumStr := fmt.Sprintf("%02d", i+1)
+
 			seat := Seat{
-				ID:     "seat-" + row + "-" + strconv.Itoa(i+1),
+				ID:     "seat-" + row + "-" + seatNumStr,
 				Row:    row,
 				Seat:   i + 1,
 				Status: "Available",
@@ -232,7 +234,6 @@ func main() {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /event/{eventID}", EventShowHandler())
-	mux.HandleFunc("GET /user/{userID}/basket", BasketShowHandler())
 	mux.HandleFunc("POST /reserve", ReserveHandler())
 
 	mux.HandleFunc("GET /sse", sseServer.ServeHTTP)
@@ -269,25 +270,8 @@ func EventShowHandler() http.HandlerFunc {
 	}
 }
 
-func BasketShowHandler() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		userID := r.PathValue("userID")
-		basket := inventory.GetBasket(userID)
-
-		tmpl := template.Must(template.ParseFiles("templates/basket.html"))
-		err := tmpl.Execute(w, basket)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-	}
-}
-
 func (a *InventoryActor) GetEvent(eventID string) Event {
-	return a.events[eventID]
-}
-
-func (a *InventoryActor) GetBasket(userID string) []Ticket {
-	return a.baskets[userID]
+	return a.events[strings.ToLower(eventID)]
 }
 
 func (t Ticket) Seat() string {
